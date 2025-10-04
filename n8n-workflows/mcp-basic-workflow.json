@@ -1,0 +1,51 @@
+{
+  "name": "datadog-scraper-mcp-basic",
+  "nodes": [
+    {
+      "parameters": {
+        "tool": "scrape_datadog_docs",
+        "max_depth": 2,
+        "delay": 0.5
+      },
+      "id": "mcp-scraper",
+      "name": "MCP Datadog Scraper",
+      "type": "@n8n/n8n-nodes-langchain.mcpTool",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "message",
+              "value": "🚀 Scraping completed via MCP server"
+            }
+          ]
+        }
+      },
+      "id": "success-message",
+      "name": "Success Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [460, 300]
+    }
+  ],
+  "connections": {
+    "MCP Datadog Scraper": {
+      "main": [
+        [
+          {
+            "node": "Success Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true
+  }
+}

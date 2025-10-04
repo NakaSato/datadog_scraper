@@ -1,0 +1,116 @@
+services:
+  datadog-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: datadog-scraper
+
+    # Environment variables for configuration
+    environment:
+      - MAX_DEPTH=${MAX_DEPTH:-2}
+      - DELAY=${DELAY:-0.5}
+      - HOST=${HOST:-0.0.0.0}
+      - PORT=${PORT:-8000}
+      - SAVE_RESULTS=${SAVE_RESULTS:-true}
+      - MCP_SERVER_ENABLED=${MCP_SERVER_ENABLED:-false}
+
+    # Port mapping
+    ports:
+      - "${PORT:-8000}:8000"
+
+    # Volume mounts for persistent output
+    volumes:
+      - ./output:/app/output:rw
+      - ./results:/app/results:rw
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Network configuration
+    networks:
+      - scraper-network
+
+    # Resource limits (optional)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # MCP Server for n8n integration (optional)
+  datadog-mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+      target: mcp-server
+    container_name: datadog-mcp-server
+    environment:
+      - SCRAPER_URL=http://datadog-scraper:8000
+      - MCP_SERVER_PORT=8001
+      - LOG_LEVEL=INFO
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./logs:/app/logs:rw
+    depends_on:
+      - datadog-scraper
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - scraper-network
+    profiles:
+      - mcp  # Only start when MCP is needed
+
+  # Optional: n8n service for local testing
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n-local
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-password}
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=${N8N_PORT:-5678}
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
+      - GENERIC_TIMEZONE=${TZ:-UTC}
+      # MCP Server configuration
+      - MCP_SERVERS_CONFIG=/data/mcp-servers.json
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n-workflows:/home/node/workflows:rw
+      - ./datadog-mcp-server-config.json:/data/mcp-servers.json:ro
+    networks:
+      - scraper-network
+    restart: unless-stopped
+    depends_on:
+      - datadog-scraper
+      # - datadog-mcp-server  # Temporarily disabled since MCP server Dockerfile was removed
+    profiles:
+      - n8n  # Only start n8n if explicitly requested
+
+# Named volumes for data persistence
+volumes:
+  n8n_data:
+    driver: local
+
+# Networks for service communication
+networks:
+  scraper-network:
+    driver: bridge
+    name: datadog-scraper-network
