@@ -149,6 +149,116 @@ class ContentExtractor:
             'word_count': 0,
             'extracted_at': datetime.now().isoformat()
         }
+    
+    def save_as_separate_files(self, urls: List[str], output_dir: str = 'extracted_content', 
+                              format_type: str = 'json', delay: float = 0.5) -> Dict:
+        """Extract content from URLs and save as separate files by URL
+        
+        Args:
+            urls: List of URLs to extract content from
+            output_dir: Directory to save files
+            format_type: 'json' or 'markdown'
+            delay: Delay between requests
+            
+        Returns:
+            Statistics about extraction
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        
+        stats = {
+            'total_urls': len(urls),
+            'successful': 0,
+            'failed': 0,
+            'files_created': [],
+            'format': format_type
+        }
+        
+        for i, url in enumerate(urls, 1):
+            print(f"[{i}/{len(urls)}] Extracting: {url}")
+            
+            # Extract content
+            content = self.extract_content(url)
+            
+            # Generate filename from URL
+            filename = self._url_to_filename(url)
+            filepath = ""
+            
+            if format_type == 'json':
+                filepath = os.path.join(output_dir, f"{filename}.json")
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(content, f, indent=2, ensure_ascii=False)
+                    
+            elif format_type == 'markdown':
+                filepath = os.path.join(output_dir, f"{filename}.md")
+                markdown_content = self._convert_to_markdown(content)
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(markdown_content)
+            
+            if filepath:
+                stats['files_created'].append(filepath)
+                stats['successful'] += 1
+            
+            # Add delay between requests
+            time.sleep(delay)
+        
+        print(f"\n✅ Extracted {stats['successful']} pages to {output_dir}/")
+        return stats
+    
+    def _url_to_filename(self, url: str) -> str:
+        """Convert URL to safe filename"""
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        
+        # Use path for filename
+        path = parsed.path.strip('/')
+        if not path:
+            return 'index'
+            
+        # Replace slashes and special characters
+        filename = path.replace('/', '-').replace('_', '-')
+        filename = re.sub(r'[^\w\-]', '', filename)
+        
+        # Limit length
+        return filename[:200] if filename else 'index'
+    
+    def _convert_to_markdown(self, content: Dict) -> str:
+        """Convert extracted content to markdown format"""
+        md = f"""---
+url: {content['url']}
+title: {content['title']}
+word_count: {content['word_count']}
+extracted_at: {content['extracted_at']}
+---
+
+# {content['title']}
+
+**URL:** [{content['url']}]({content['url']})
+**Extracted:** {content['extracted_at']}
+**Word Count:** {content['word_count']}
+
+"""
+        
+        # Add headings structure
+        if content['headings']:
+            md += "## Document Structure\n\n"
+            for heading in content['headings']:
+                indent = "  " * (heading['level'] - 1)
+                md += f"{indent}- {heading['text']}\n"
+            md += "\n"
+        
+        # Add main content
+        if content['text']:
+            md += "## Content\n\n"
+            md += content['text'] + "\n\n"
+        
+        # Add code blocks
+        if content['code_blocks']:
+            md += "## Code Examples\n\n"
+            for i, code_block in enumerate(content['code_blocks'], 1):
+                md += f"### Code Block {i} ({code_block['language']})\n\n"
+                md += f"```{code_block['language']}\n{code_block['code']}\n```\n\n"
+        
+        return md
 
 
 class RAGExporter:
@@ -734,6 +844,9 @@ Examples:
   # Content extraction mode (full page content)
   python main.py --extract-content --max-depth 2 --output-dir ./scraped_content
   
+  # COMPLETE DATA SCRAPING (all URLs with content)
+  python main.py --extract-content --separate-files --extract-format both --max-depth 3 --delay 0.3
+  
   # RAG export (after scraping)
   python main.py --export-rag all
   python main.py --export-rag jsonl --output-dir ./rag_output
@@ -741,8 +854,8 @@ Examples:
   # API server mode
   python main.py --api --port 8000
   
-  # Combined: scrape + extract + export
-  python main.py --max-depth 3 --extract-content --export-rag all
+  # Combined: scrape + extract + export ALL DATA
+  python main.py --max-depth 4 --extract-content --separate-files --extract-format both --export-rag all
         """
     )
     
@@ -756,11 +869,17 @@ Examples:
     parser.add_argument('--export-rag', choices=['jsonl', 'markdown', 'json', 'all'],
                        help='Export in RAG-optimized format')
     
+    # Content extraction format options
+    parser.add_argument('--extract-format', choices=['json', 'markdown', 'both'], default='json',
+                       help='Format for extracted content files (default: json)')
+    parser.add_argument('--separate-files', action='store_true',
+                       help='Save each URL as separate file instead of combined JSON')
+    
     # Scraping options
-    parser.add_argument('--max-depth', type=int, default=2,
-                       help='Maximum depth for scraping (default: 2)')
-    parser.add_argument('--delay', type=float, default=0.5,
-                       help='Delay between requests in seconds (default: 0.5)')
+    parser.add_argument('--max-depth', type=int, default=3,
+                       help='Maximum depth for scraping (default: 3 for complete coverage)')
+    parser.add_argument('--delay', type=float, default=0.3,
+                       help='Delay between requests in seconds (default: 0.3)')
     parser.add_argument('--output-dir', type=str, default='output',
                        help='Output directory for results (default: output)')
     parser.add_argument('--save-results', action='store_true', default=True,
@@ -830,19 +949,44 @@ Examples:
         content_dir = os.path.join(args.output_dir, 'content')
         os.makedirs(content_dir, exist_ok=True)
         
-        extracted = []
-        for i, url in enumerate(sorted(scraper_instance.visited), 1):
-            print(f"  [{i}/{len(scraper_instance.visited)}] {url}")
-            content = extractor.extract_content(url)
-            extracted.append(content)
-            time.sleep(args.delay)
+        if args.separate_files:
+            # Save as separate files by URL
+            urls = sorted(scraper_instance.visited)
+            
+            if args.extract_format == 'both':
+                # Save both JSON and markdown
+                json_dir = os.path.join(content_dir, 'json')
+                md_dir = os.path.join(content_dir, 'markdown')
+                
+                print("  Saving as separate JSON files...")
+                json_stats = extractor.save_as_separate_files(urls, json_dir, 'json', args.delay)
+                
+                print("  Saving as separate markdown files...")
+                md_stats = extractor.save_as_separate_files(urls, md_dir, 'markdown', args.delay)
+                
+                print(f"\n✅ Created {json_stats['successful']} JSON files and {md_stats['successful']} markdown files")
+                
+            else:
+                # Save in specified format
+                format_dir = os.path.join(content_dir, args.extract_format)
+                stats = extractor.save_as_separate_files(urls, format_dir, args.extract_format, args.delay)
+                print(f"\n✅ Created {stats['successful']} {args.extract_format} files in {format_dir}/")
         
-        # Save extracted content
-        content_file = os.path.join(content_dir, 'extracted_content.json')
-        with open(content_file, 'w', encoding='utf-8') as f:
-            json.dump(extracted, f, indent=2, ensure_ascii=False)
-        
-        print(f"\n✅ Extracted {len(extracted)} pages to {content_file}")
+        else:
+            # Original combined extraction
+            extracted = []
+            for i, url in enumerate(sorted(scraper_instance.visited), 1):
+                print(f"  [{i}/{len(scraper_instance.visited)}] {url}")
+                content = extractor.extract_content(url)
+                extracted.append(content)
+                time.sleep(args.delay)
+            
+            # Save extracted content
+            content_file = os.path.join(content_dir, 'extracted_content.json')
+            with open(content_file, 'w', encoding='utf-8') as f:
+                json.dump(extracted, f, indent=2, ensure_ascii=False)
+            
+            print(f"\n✅ Extracted {len(extracted)} pages to {content_file}")
         
         # Save standard results
         if args.save_results:

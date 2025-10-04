@@ -1,0 +1,262 @@
+name: Datadog Documentation Scraper
+
+on:
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      max_depth:
+        description: 'Maximum scraping depth (1-4)'
+        required: true
+        default: '3'
+        type: choice
+        options:
+        - '1'
+        - '2'
+        - '3'
+        - '4'
+      delay:
+        description: 'Delay between requests (seconds)'
+        required: true
+        default: '0.3'
+        type: string
+      format:
+        description: 'Output format'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+        - 'json'
+        - 'markdown'
+        - 'both'
+      parallel:
+        description: 'Use parallel processing'
+        required: true
+        default: true
+        type: boolean
+  
+  # Schedule to run weekly (optional)
+  schedule:
+    - cron: '0 2 * * 0'  # Every Sunday at 2 AM UTC
+
+  # Allow triggering on push to main (optional)
+  push:
+    branches: [ main ]
+    paths:
+      - 'main.py'
+      - 'comprehensive_scraper.py'
+      - '.github/workflows/datadog-scraper.yml'
+
+jobs:
+  scrape-datadog-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create output directory
+      run: |
+        mkdir -p ./scraped_data
+        
+    - name: Run comprehensive scraper
+      env:
+        MAX_DEPTH: ${{ inputs.max_depth || '3' }}
+        DELAY: ${{ inputs.delay || '0.3' }}
+        PARALLEL: ${{ inputs.parallel || 'true' }}
+      run: |
+        echo "🚀 Starting Datadog Documentation Scraping..."
+        echo "📊 Max Depth: $MAX_DEPTH"
+        echo "⏱️ Delay: $DELAY seconds"
+        echo "⚡ Parallel: $PARALLEL"
+        echo "==============================================="
+        
+        # Run the comprehensive scraper
+        if [ "$PARALLEL" = "true" ]; then
+          python comprehensive_scraper.py \
+            --mode comprehensive \
+            --max-depth $MAX_DEPTH \
+            --delay $DELAY \
+            --output-dir ./scraped_data \
+            --parallel
+        else
+          python comprehensive_scraper.py \
+            --mode comprehensive \
+            --max-depth $MAX_DEPTH \
+            --delay $DELAY \
+            --output-dir ./scraped_data \
+            --sequential
+        fi
+        
+    - name: Generate scraping summary
+      run: |
+        echo "📊 SCRAPING COMPLETED - SUMMARY" > ./scraped_data/SUMMARY.md
+        echo "================================" >> ./scraped_data/SUMMARY.md
+        echo "" >> ./scraped_data/SUMMARY.md
+        echo "**Scraping Parameters:**" >> ./scraped_data/SUMMARY.md
+        echo "- Max Depth: ${{ inputs.max_depth || '3' }}" >> ./scraped_data/SUMMARY.md
+        echo "- Delay: ${{ inputs.delay || '0.3' }}s" >> ./scraped_data/SUMMARY.md
+        echo "- Parallel Processing: ${{ inputs.parallel || 'true' }}" >> ./scraped_data/SUMMARY.md
+        echo "- Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> ./scraped_data/SUMMARY.md
+        echo "- GitHub Workflow: ${{ github.run_id }}" >> ./scraped_data/SUMMARY.md
+        echo "" >> ./scraped_data/SUMMARY.md
+        echo "**Files Generated:**" >> ./scraped_data/SUMMARY.md
+        
+        # Count files
+        if [ -d "./scraped_data/json" ]; then
+          JSON_COUNT=$(find ./scraped_data/json -name "*.json" | wc -l)
+          echo "- JSON files: $JSON_COUNT" >> ./scraped_data/SUMMARY.md
+        fi
+        
+        if [ -d "./scraped_data/markdown" ]; then
+          MD_COUNT=$(find ./scraped_data/markdown -name "*.md" | wc -l)
+          echo "- Markdown files: $MD_COUNT" >> ./scraped_data/SUMMARY.md
+        fi
+        
+        # Directory size
+        TOTAL_SIZE=$(du -sh ./scraped_data | cut -f1)
+        echo "- Total size: $TOTAL_SIZE" >> ./scraped_data/SUMMARY.md
+        echo "" >> ./scraped_data/SUMMARY.md
+        
+        # Add file tree
+        echo "**Directory Structure:**" >> ./scraped_data/SUMMARY.md
+        echo '```' >> ./scraped_data/SUMMARY.md
+        tree ./scraped_data -L 3 || find ./scraped_data -type d | head -20
+        echo '```' >> ./scraped_data/SUMMARY.md
+        
+        echo "✅ Summary generated!"
+        
+    - name: Create combined archive
+      run: |
+        cd ./scraped_data
+        
+        # Create separate archives for different formats
+        if [ -d "json" ]; then
+          echo "📦 Creating JSON archive..."
+          tar -czf ../datadog-docs-json-$(date +%Y%m%d).tar.gz json/ combined/ SUMMARY.md
+        fi
+        
+        if [ -d "markdown" ]; then
+          echo "📦 Creating Markdown archive..."
+          tar -czf ../datadog-docs-markdown-$(date +%Y%m%d).tar.gz markdown/ combined/ SUMMARY.md
+        fi
+        
+        # Create complete archive
+        echo "📦 Creating complete archive..."
+        cd ..
+        tar -czf datadog-docs-complete-$(date +%Y%m%d).tar.gz scraped_data/
+        
+        echo "✅ Archives created!"
+        ls -lh *.tar.gz
+        
+    - name: Upload JSON files as artifact
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: datadog-docs-json-${{ github.run_number }}
+        path: |
+          ./scraped_data/json/
+          ./scraped_data/combined/
+          ./scraped_data/SUMMARY.md
+        retention-days: 30
+        
+    - name: Upload Markdown files as artifact
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: datadog-docs-markdown-${{ github.run_number }}
+        path: |
+          ./scraped_data/markdown/
+          ./scraped_data/combined/
+          ./scraped_data/SUMMARY.md
+        retention-days: 30
+        
+    - name: Upload complete dataset as artifact
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: datadog-docs-complete-${{ github.run_number }}
+        path: ./scraped_data/
+        retention-days: 30
+        
+    - name: Upload compressed archives
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: datadog-docs-archives-${{ github.run_number }}
+        path: "*.tar.gz"
+        retention-days: 90
+        
+    - name: Create Release (on schedule or manual)
+      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: scrape-${{ github.run_number }}-$(date +%Y%m%d)
+        release_name: Datadog Docs Scrape ${{ github.run_number }}
+        body: |
+          🔍 **Datadog Documentation Scraping Results**
+          
+          **Parameters:**
+          - Max Depth: ${{ inputs.max_depth || '3' }}
+          - Delay: ${{ inputs.delay || '0.3' }}s
+          - Parallel Processing: ${{ inputs.parallel || 'true' }}
+          - Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          
+          **Downloads:**
+          - Complete dataset available as GitHub artifacts
+          - Archives attached to this release
+          - Individual JSON and Markdown files available
+          
+          **Usage:**
+          1. Download the artifacts from this workflow run
+          2. Extract the archives
+          3. Use the JSON files for data processing
+          4. Use the Markdown files for documentation
+          
+          See the SUMMARY.md file for detailed statistics.
+        draft: false
+        prerelease: false
+        
+    - name: Post-scraping cleanup and stats
+      if: always()
+      run: |
+        echo ""
+        echo "🎉 SCRAPING WORKFLOW COMPLETED!"
+        echo "==============================="
+        echo "📊 Final Statistics:"
+        
+        if [ -f "./scraped_data/combined/statistics.json" ]; then
+          cat ./scraped_data/combined/statistics.json
+        fi
+        
+        echo ""
+        echo "📁 Artifacts created:"
+        echo "- datadog-docs-json-${{ github.run_number }}"
+        echo "- datadog-docs-markdown-${{ github.run_number }}"  
+        echo "- datadog-docs-complete-${{ github.run_number }}"
+        echo "- datadog-docs-archives-${{ github.run_number }}"
+        echo ""
+        echo "💾 Total disk usage:"
+        du -sh ./scraped_data/ 2>/dev/null || echo "Directory not found"
+        echo ""
+        echo "🔗 Download your results from the Actions tab!"
