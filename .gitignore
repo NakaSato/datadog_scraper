@@ -8,3 +8,31 @@ wheels/
 
 # Virtual environments
 .venv
+venv/
+env/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+
+# Scraping outputs (regenerated on each run)
+datadog_all_links.txt
+datadog_links_detailed.txt
+datadog_links.json
+datadog_tree_structure.txt
+
+# Output directories
+output/
+results/
+
+# Environment files
+.env
+
+# Temporary files
+*.tmp
+*.log

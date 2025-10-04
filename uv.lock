@@ -117,6 +117,7 @@ source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "fastapi" },
+    { name = "pydantic" },
     { name = "python-multipart" },
     { name = "requests" },
     { name = "uvicorn", extra = ["standard"] },
@@ -133,6 +134,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.14.2" },
     { name = "fastapi", specifier = ">=0.104.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25.0" },
+    { name = "pydantic", specifier = ">=2.11.10" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "requests", specifier = ">=2.32.5" },
